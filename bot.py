@@ -1,5 +1,6 @@
 # bot.py
-
+from flask import Flask, request
+import asyncio
 from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, CallbackQueryHandler, ConversationHandler, ContextTypes, filters
 from texts import texts
@@ -17,6 +18,7 @@ logging.basicConfig(
 # Load environment variables
 load_dotenv()
 BOT_TOKEN = os.getenv('BOT_TOKEN')
+WEBHOOK_URL = os.getenv('WEBHOOK_URL')
 
 # States
 ASK_FOR_LINK, ASK_FOR_QUALITY = range(2)
@@ -144,8 +146,7 @@ async def handle_quality_choice(update: Update, context: ContextTypes.DEFAULT_TY
         return ConversationHandler.END
 
     try:
-        if not os.path.exists('downloads'):
-            os.makedirs('downloads')
+        os.makedirs('downloads', exist_ok=True)
 
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=True)
@@ -187,37 +188,90 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ConversationHandler.END
 
 # Main
-def main():
-    application = ApplicationBuilder().token(BOT_TOKEN).build()
+# def main():
+#     application = ApplicationBuilder().token(BOT_TOKEN).build()
 
-    conv_handler = ConversationHandler(
-        entry_points=[
-            CommandHandler('download', download_command),
-            MessageHandler(filters.Regex('^تحميل فيديو 🎥$'), download_command),
-            MessageHandler(filters.Regex('^Download Video 🎥$'), download_command),
+#     conv_handler = ConversationHandler(
+#         entry_points=[
+#             CommandHandler('download', download_command),
+#             MessageHandler(filters.Regex('^تحميل فيديو 🎥$'), download_command),
+#             MessageHandler(filters.Regex('^Download Video 🎥$'), download_command),
+#         ],
+#         states={
+#             ASK_FOR_LINK: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_link)],
+#             ASK_FOR_QUALITY: [
+#                 CallbackQueryHandler(handle_quality_choice),
+#                 MessageHandler(filters.TEXT & ~filters.COMMAND, handle_quality_choice),
+#             ],
+#         },
+#         fallbacks=[
+#             CommandHandler('cancel', cancel),
+#             MessageHandler(filters.Regex('^❌ إلغاء$'), cancel),
+#             MessageHandler(filters.Regex('^❌ Cancel$'), cancel),
+#         ],
+#         per_message=True,
+#     )
+
+#     application.add_handler(CommandHandler('start', start))
+#     application.add_handler(CommandHandler('language', change_language))
+#     application.add_handler(conv_handler)
+#     application.add_error_handler(error_handler)
+#     application.add_handler(CallbackQueryHandler(choose_language, pattern='^(en|ar)$'))
+
+#     application.run_polling()
+
+# if __name__ == '__main__':
+#     main()
+
+
+app = Flask(__name__)
+application = ApplicationBuilder().token(BOT_TOKEN).build()
+
+# === Register your handlers here, same as before ===
+conv_handler = ConversationHandler(
+    entry_points=[
+        CommandHandler('download', download_command),
+        MessageHandler(filters.Regex('^تحميل فيديو 🎥$'), download_command),
+        MessageHandler(filters.Regex('^Download Video 🎥$'), download_command),
+    ],
+    states={
+        ASK_FOR_LINK: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_link)],
+        ASK_FOR_QUALITY: [
+            CallbackQueryHandler(handle_quality_choice),
+            MessageHandler(filters.TEXT & ~filters.COMMAND, handle_quality_choice),
         ],
-        states={
-            ASK_FOR_LINK: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_link)],
-            ASK_FOR_QUALITY: [
-                CallbackQueryHandler(handle_quality_choice),
-                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_quality_choice),
-            ],
-        },
-        fallbacks=[
-            CommandHandler('cancel', cancel),
-            MessageHandler(filters.Regex('^❌ إلغاء$'), cancel),
-            MessageHandler(filters.Regex('^❌ Cancel$'), cancel),
-        ],
-        per_message=True,
-    )
+    },
+    fallbacks=[
+        CommandHandler('cancel', cancel),
+        MessageHandler(filters.Regex('^❌ إلغاء$'), cancel),
+        MessageHandler(filters.Regex('^❌ Cancel$'), cancel),
+    ],
+    per_message=True,
+)
 
-    application.add_handler(CommandHandler('start', start))
-    application.add_handler(CommandHandler('language', change_language))
-    application.add_handler(conv_handler)
-    application.add_error_handler(error_handler)
-    application.add_handler(CallbackQueryHandler(choose_language, pattern='^(en|ar)$'))
+application.add_handler(CommandHandler('start', start))
+application.add_handler(CommandHandler('language', change_language))
+application.add_handler(conv_handler)
+application.add_error_handler(error_handler)
+application.add_handler(CallbackQueryHandler(choose_language, pattern='^(en|ar)$'))
 
-    application.run_polling()
+
+@app.route('/webhook', methods=['POST'])
+def webhook():
+    update = Update.de_json(request.get_json(force=True), application.bot)
+    asyncio.run(application.process_update(update))
+    return "OK", 200
+
+@app.route('/')
+def index():
+    return "🤖 Telegram bot webhook is live!"
+
+async def set_webhook():
+    await application.bot.delete_webhook(drop_pending_updates=True)
+    await application.bot.set_webhook(f"https://{WEBHOOK_URL}/webhook")
+
 
 if __name__ == '__main__':
-    main()
+    loop = asyncio.get_event_loop()
+    loop.run_until_complete(set_webhook())
+    app.run(host='0.0.0.0', port=8000)
