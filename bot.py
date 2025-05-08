@@ -259,8 +259,15 @@ application.add_handler(CallbackQueryHandler(choose_language, pattern='^(en|ar)$
 @app.route('/webhook', methods=['POST'])
 def webhook():
     update = Update.de_json(request.get_json(force=True), application.bot)
-    asyncio.run(application.process_update(update))
-    return "OK", 200
+
+    async def handle():
+        if not application._initialized:
+            await application.initialize()
+        await application.process_update(update)
+
+    asyncio.run(handle())
+    return 'ok', 200
+
 
 @app.route('/')
 def index():
